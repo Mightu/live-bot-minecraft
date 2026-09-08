@@ -114,7 +114,6 @@ app.listen(PORT, () => {
 log('Dashboard listening on ' + PORT);
 });
 
-// Reconnection system
 function scheduleReconnect() {
 if (!state.started) {
 return;
@@ -128,7 +127,7 @@ state.reconnectAttempts++;
 
 const baseDelay = Number(
 process.env.RECONNECT_DELAY ||
-config.utils?.['auto-reconnect-delay'] ||
+(config.utils && config.utils['auto-reconnect-delay']) ||
 60000
 );
 
@@ -157,7 +156,6 @@ if (state.started && !bot) {
 }, delay);
 }
 
-// Create Minecraft bot
 function createBot() {
 if (bot) {
 log('Bot already exists');
@@ -166,7 +164,9 @@ return;
 
 state.started = true;
 
-const host = process.env.MC_HOST || config.server.ip;
+const host =
+process.env.MC_HOST ||
+config.server.ip;
 
 const port = Number(
 process.env.MC_PORT ||
@@ -214,7 +214,7 @@ auth: auth,
 version: version
 });
 
-```
+
 bot.loadPlugin(pathfinder);
 
 bot.once('spawn', () => {
@@ -266,9 +266,10 @@ bot.on('chat', (username, message) => {
 });
 
 bot.on('error', error => {
-  const message = error && error.message
-    ? error.message
-    : String(error);
+  const message =
+    error && error.message
+      ? error.message
+      : String(error);
 
   state.errors.push(message);
   state.errors = state.errors.slice(-10);
@@ -290,14 +291,11 @@ bot.on('kicked', reason => {
 
   log('Kicked: ' + message);
 
-  // Do not continuously reconnect when banned
   if (
     message.toLowerCase().includes('banned') ||
     message.toLowerCase().includes('ban')
   ) {
-    log(
-      'Bot is banned. Automatic reconnection has been disabled.'
-    );
+    log('Bot is banned. Automatic reconnection disabled.');
 
     state.started = false;
 
@@ -338,7 +336,7 @@ bot.once('end', () => {
     log('Automatic reconnection disabled');
   }
 });
-```
+
 
 } catch (error) {
 const message =
@@ -346,8 +344,10 @@ error && error.message
 ? error.message
 : String(error);
 
-```
+
 state.errors.push(message);
+state.errors = state.errors.slice(-10);
+
 log('Failed to create bot: ' + message);
 
 bot = null;
@@ -355,12 +355,11 @@ bot = null;
 if (state.started) {
   scheduleReconnect();
 }
-```
+
 
 }
 }
 
-// Automatically start bot
 if (process.env.AUTO_START !== 'false') {
 createBot();
 }
