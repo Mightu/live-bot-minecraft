@@ -12,12 +12,6 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 5000;
 
-// Reconnection settings
-const RECONNECT_DELAY = Math.max(
-Number(process.env.RECONNECT_DELAY || config.utils?.['auto-reconnect-delay'] || 30000),
-10000
-);
-
 let bot = null;
 let ai = null;
 let reconnectTimer = null;
@@ -28,22 +22,24 @@ started: false,
 startTime: Date.now(),
 lastGoal: 'offline',
 errors: [],
-reconnectAttempts: 0,
-lastActivity: Date.now()
+reconnectAttempts: 0
 };
 
-function log(msg) {
-console.log(`[${new Date().toISOString()}] ${msg}`);
-state.lastActivity = Date.now();
+function log(message) {
+console.log('[' + new Date().toISOString() + '] ' + message);
 }
 
-// --------------------
-// Railway Dashboard
-// --------------------
-
+// Dashboard
 app.get('/', (req, res) => {
-res.send(`     <h1>${config.name || 'Minecraft'} Survival AI</h1>     <p>Status: <b>${state.connected ? 'ONLINE' : 'OFFLINE'}</b></p>     <p>Goal: ${ai?.lastGoal || state.lastGoal}</p>     <p>Reconnect attempts: ${state.reconnectAttempts}</p>     <p><a href="/health">JSON Status</a></p>     <p><a href="/inventory">Inventory</a></p>
-  `);
+const status = state.connected ? 'ONLINE' : 'OFFLINE';
+
+res.send(
+'<h1>' + (config.name || 'Minecraft') + ' Survival AI</h1>' +
+'<p>Status: <b>' + status + '</b></p>' +
+'<p>Goal: ' + (ai?.lastGoal || state.lastGoal) + '</p>' +
+'<p><a href="/health">Health</a></p>' +
+'<p><a href="/inventory">Inventory</a></p>'
+);
 });
 
 app.get('/health', (req, res) => {
@@ -51,46 +47,57 @@ res.json({
 status: state.connected ? 'connected' : 'disconnected',
 started: state.started,
 uptime: Math.floor((Date.now() - state.startTime) / 1000),
-coords: bot?.entity?.position || null,
-goal: ai?.lastGoal || state.lastGoal,
+coords: bot && bot.entity ? bot.entity.position : null,
+goal: ai ? ai.lastGoal : state.lastGoal,
 reconnectAttempts: state.reconnectAttempts,
 errors: state.errors.slice(-5)
 });
 });
 
 app.get('/inventory', (req, res) => {
+if (!bot) {
+return res.json([]);
+}
+
 res.json(
-bot
-? bot.inventory.items().map(i => ({
-name: i.name,
-count: i.count
+bot.inventory.items().map(item => ({
+name: item.name,
+count: item.count
 }))
-: []
 );
 });
 
 app.post('/start', (req, res) => {
 if (!state.started) {
+state.started = true;
 createBot();
 }
 
 res.json({
 ok: true,
-message: 'Bot start requested'
+message: 'Bot started'
 });
 });
 
 app.post('/stop', (req, res) => {
-log('Stopping bot from dashboard...');
-
 state.started = false;
 
+if (reconnectTimer) {
 clearTimeout(reconnectTimer);
 reconnectTimer = null;
+}
 
 if (ai) {
+try {
 ai.stop();
+} catch (error) {
+log('Error stopping AI: ' + error.message);
+}
+
+```
 ai = null;
+```
+
 }
 
 if (bot) {
@@ -104,38 +111,38 @@ message: 'Bot stopped'
 });
 
 app.listen(PORT, () => {
-log(`Dashboard listening on ${PORT}`);
+log('Dashboard listening on ' + PORT);
 });
 
-// --------------------
-// Reconnection System
-// --------------------
-
+// Reconnection system
 function scheduleReconnect() {
-// Do not reconnect if manually stopped
 if (!state.started) {
-log('Bot is stopped. Reconnection cancelled.');
 return;
 }
 
-// Prevent multiple reconnect timers
 if (reconnectTimer) {
-log('Reconnect already scheduled.');
 return;
 }
 
 state.reconnectAttempts++;
 
-// Exponential backoff to prevent server throttling
+const baseDelay = Number(
+process.env.RECONNECT_DELAY ||
+config.utils?.['auto-reconnect-delay'] ||
+60000
+);
+
 const delay = Math.min(
-RECONNECT_DELAY * Math.pow(2, state.reconnectAttempts - 1),
+baseDelay * Math.pow(2, state.reconnectAttempts - 1),
 300000
 );
 
 log(
-`Reconnect attempt ${state.reconnectAttempts} scheduled in ${Math.round(
-      delay / 1000
-    )} seconds...`
+'Reconnect attempt ' +
+state.reconnectAttempts +
+' scheduled in ' +
+Math.round(delay / 1000) +
+' seconds'
 );
 
 reconnectTimer = setTimeout(() => {
@@ -150,21 +157,14 @@ if (state.started && !bot) {
 }, delay);
 }
 
-// --------------------
-// Minecraft Bot
-// --------------------
-
+// Create Minecraft bot
 function createBot() {
-// Prevent duplicate bots
 if (bot) {
-log('Bot already exists. Connection request ignored.');
+log('Bot already exists');
 return;
 }
 
-// Prevent connection attempts while manually stopped
-if (!state.started) {
 state.started = true;
-}
 
 const host = process.env.MC_HOST || config.server.ip;
 
@@ -184,9 +184,11 @@ config['bot-account'].password;
 
 const auth =
 process.env.MC_AUTH ||
-(config['bot-account'].type === 'offline'
+(
+config['bot-account'].type === 'offline'
 ? 'offline'
-: 'microsoft');
+: 'microsoft'
+);
 
 const version =
 process.env.MC_VERSION ||
@@ -194,17 +196,22 @@ config.server.version ||
 false;
 
 log(
-`Connecting to ${host}:${port} as ${username}...`
+'Connecting to ' +
+host +
+':' +
+port +
+' as ' +
+username
 );
 
 try {
 bot = mineflayer.createBot({
-host,
-port,
-username,
-password,
-auth,
-version
+host: host,
+port: port,
+username: username,
+password: password,
+auth: auth,
+version: version
 });
 
 ```
@@ -215,7 +222,7 @@ bot.once('spawn', () => {
   state.startTime = Date.now();
   state.reconnectAttempts = 0;
 
-  log('Successfully joined the Minecraft server.');
+  log('Successfully joined the Minecraft server');
 
   const movements = new Movements(
     bot,
@@ -231,16 +238,16 @@ bot.once('spawn', () => {
     ai = new SurvivalAI(bot, config, log);
     ai.start();
 
-    log('Survival AI started.');
+    log('Survival AI started');
   } catch (error) {
     state.errors.push(error.message);
-    log(`Survival AI error: ${error.message}`);
+    log('Survival AI error: ' + error.message);
   }
 });
 
 bot.on('health', () => {
   if (bot && bot.food < 8) {
-    log('Low food detected.');
+    log('Low food detected');
   }
 });
 
@@ -250,20 +257,23 @@ bot.on('chat', (username, message) => {
   }
 
   if (
-    config.chat?.respond &&
+    config.chat &&
+    config.chat.respond &&
     /^(hi|hello|hey)\b/i.test(message)
   ) {
-    bot.chat(`Hello ${username}!`);
+    bot.chat('Hello ' + username + '!');
   }
 });
 
 bot.on('error', error => {
-  const message = error?.message || String(error);
+  const message = error && error.message
+    ? error.message
+    : String(error);
 
   state.errors.push(message);
   state.errors = state.errors.slice(-10);
 
-  log(`Bot error: ${message}`);
+  log('Bot error: ' + message);
 });
 
 bot.on('kicked', reason => {
@@ -274,30 +284,32 @@ bot.on('kicked', reason => {
       typeof reason === 'string'
         ? reason
         : JSON.stringify(reason);
-  } catch {
+  } catch (error) {
     message = String(reason);
   }
 
-  log(`Kicked: ${message}`);
+  log('Kicked: ' + message);
 
-  // Detect bans and avoid rapid reconnecting
+  // Do not continuously reconnect when banned
   if (
     message.toLowerCase().includes('banned') ||
     message.toLowerCase().includes('ban')
   ) {
     log(
-      'Bot appears to be banned. Automatic reconnection will be disabled.'
+      'Bot is banned. Automatic reconnection has been disabled.'
     );
 
     state.started = false;
 
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
   }
 });
 
 bot.once('end', () => {
-  log('Disconnected from Minecraft server.');
+  log('Disconnected');
 
   state.connected = false;
 
@@ -305,7 +317,7 @@ bot.once('end', () => {
     try {
       ai.stop();
     } catch (error) {
-      log(`AI stop error: ${error.message}`);
+      log('AI stop error: ' + error.message);
     }
 
     ai = null;
@@ -314,25 +326,29 @@ bot.once('end', () => {
   bot = null;
 
   const autoReconnect =
-    config.utils?.['auto-reconnect'] === true ||
-    config.utils?.autoReconnect === true;
+    config.utils &&
+    (
+      config.utils['auto-reconnect'] === true ||
+      config.utils.autoReconnect === true
+    );
 
   if (state.started && autoReconnect) {
     scheduleReconnect();
   } else {
-    log('Automatic reconnection disabled.');
+    log('Automatic reconnection disabled');
   }
 });
 ```
 
 } catch (error) {
-const message = error?.message || String(error);
+const message =
+error && error.message
+? error.message
+: String(error);
 
 ```
 state.errors.push(message);
-state.errors = state.errors.slice(-10);
-
-log(`Failed to create bot: ${message}`);
+log('Failed to create bot: ' + message);
 
 bot = null;
 
@@ -344,10 +360,7 @@ if (state.started) {
 }
 }
 
-// --------------------
-// Auto Start
-// --------------------
-
+// Automatically start bot
 if (process.env.AUTO_START !== 'false') {
 createBot();
 }
